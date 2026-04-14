@@ -393,7 +393,7 @@ async function processData() {
 
 // --- Main execution ---
 function init() {
-    readTextFile("/api/data", function(text) {
+    readTextFile("agents/traj.json"", function(text) {
         try {
             globalRawData = JSON.parse(text);
             processData(); // Initial load with default mode

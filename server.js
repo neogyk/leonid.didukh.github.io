@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 
 const PORT = 3000;
-const DATA_FILE_PATH = path.join(__dirname, 'agents/traj.json');
+const DATA_FILE_PATH = path.join(__dirname, './agents/traj.json');
 
 const MIME_TYPES = {
     '.html': 'text/html',
