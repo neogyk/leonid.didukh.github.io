@@ -6,6 +6,40 @@ body {
     color: #333;
 }
 
+/* Splash screen */
+@keyframes splash-lifecycle {
+    0%   { opacity: 0; }
+    10%  { opacity: 1; }       /* fade in over first 0.5s */
+    80%  { opacity: 1; }       /* hold until 4s */
+    100% { opacity: 0; }       /* fade out over last 1s */
+}
+
+#splash {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(10, 10, 26, 0.55);
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
+    animation: splash-lifecycle 5s ease forwards;
+    pointer-events: none;
+}
+
+#splash-text {
+    font-family: 'Lexend Exa', sans-serif;
+    font-size: clamp(2rem, 6vw, 5rem);
+    font-weight: 200;
+    letter-spacing: 0.08em;
+    color: #ffffff;
+    text-shadow:
+        0 0 20px rgba(100, 180, 255, 0.9),
+        0 0 60px rgba(100, 180, 255, 0.5),
+        0 0 120px rgba(60, 120, 255, 0.3);
+}
+
 #container {
     width: 100vw;
     height: 100vh;
@@ -61,13 +95,33 @@ body {
     top: 20px;
     right: 20px;
     width: 300px;
+    min-width: 200px;
+    max-width: 700px;
     max-height: 80vh;
     overflow-y: auto;
+    box-sizing: border-box;
 }
 
 #info-panel.hidden {
     opacity: 0;
     pointer-events: none;
+}
+
+#info-panel-resize-handle {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 6px;
+    height: 100%;
+    cursor: ew-resize;
+    border-radius: 8px 0 0 8px;
+    transition: background 0.2s;
+    z-index: 10;
+}
+
+#info-panel-resize-handle:hover,
+#info-panel-resize-handle.dragging {
+    background: rgba(0, 86, 179, 0.25);
 }
 
 #controls-panel {
@@ -110,6 +164,73 @@ button {
 
 button:hover {
     background: #d0d0d0;
+}
+
+/* Rendered Markdown + KaTeX inside panels */
+.field-content {
+    font-size: 0.95em;
+    line-height: 1.5;
+    margin-bottom: 15px;
+    color: #333;
+}
+
+.field-content p {
+    font-size: inherit;
+    line-height: inherit;
+    margin: 0 0 8px 0;
+}
+
+.field-content h1, .field-content h2, .field-content h3,
+.field-content h4, .field-content h5, .field-content h6 {
+    color: #0056b3;
+    margin: 8px 0 3px 0;
+    font-size: 0.95em;
+    text-transform: none;
+    letter-spacing: 0;
+    border-bottom: none;
+}
+
+.field-content ul, .field-content ol {
+    padding-left: 18px;
+    margin: 0 0 10px 0;
+}
+
+.field-content code {
+    background: rgba(0, 0, 0, 0.06);
+    border-radius: 3px;
+    padding: 1px 4px;
+    font-size: 0.88em;
+    font-family: 'Courier New', monospace;
+}
+
+.field-content pre {
+    background: rgba(0, 0, 0, 0.06);
+    border-radius: 4px;
+    padding: 8px;
+    overflow-x: auto;
+    font-size: 0.85em;
+}
+
+/* KaTeX display math — prevent overflow */
+.field-content .katex-display {
+    overflow-x: auto;
+    overflow-y: hidden;
+    margin: 8px 0;
+}
+
+/* Axis labels */
+.axis-label {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    font-size: 0.78em;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    background: rgba(255, 255, 255, 0.75);
+    padding: 2px 7px;
+    border-radius: 4px;
+    white-space: nowrap;
+    pointer-events: none;
+    user-select: none;
 }
 
 /* Scrollbar for info panel */

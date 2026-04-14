@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 import { pipeline, env } from '@xenova/transformers';
 
 // --- Configuration ---
@@ -25,23 +26,11 @@ const CONFIG = {
 
 // Global State
 let globalRawData = [];
-let embeddingCache = {}; // Cache: text -> embedding array
-let currentMode = 'triplets'; // 'triplets' or 'components'
+let globalCoords = null;       // Pre-computed coords loaded from coords.json, or null
+let embeddingCache = {};       // Cache: text -> embedding array (in-browser fallback)
+let currentMode = 'triplets';
 
 // --- Helper Functions ---
-
-// Data Loading Helper
-function readTextFile(file, callback) {
-    var rawFile = new XMLHttpRequest();
-    rawFile.overrideMimeType("application/json");
-    rawFile.open("GET", file, true);
-    rawFile.onreadystatechange = function() {
-        if (rawFile.readyState === 4 && rawFile.status == "200") {
-            callback(rawFile.responseText);
-        }
-    }
-    rawFile.send(null);
-}
 
 // UI Helper for Loading
 function updateLoadingStatus(message) {
@@ -152,6 +141,14 @@ renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(window.devicePixelRatio);
 document.getElementById('container').appendChild(renderer.domElement);
 
+// CSS2D renderer — overlaid on the same container for axis labels
+const labelRenderer = new CSS2DRenderer();
+labelRenderer.setSize(window.innerWidth, window.innerHeight);
+labelRenderer.domElement.style.position = 'absolute';
+labelRenderer.domElement.style.top = '0';
+labelRenderer.domElement.style.pointerEvents = 'none';
+document.getElementById('container').appendChild(labelRenderer.domElement);
+
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 controls.dampingFactor = 0.05;
@@ -225,35 +222,35 @@ function buildScene(trajectoryData) {
         const curveLine = new THREE.Line(curveGeometry, lineMaterial);
         group.add(curveLine);
 
-        for (let i = 0; i < points.length - 1; i++) {
-            const startPoint = points[i];
-            const endPoint = points[i + 1];
-            
-            const direction = new THREE.Vector3().subVectors(endPoint, startPoint).normalize();
-            
-            // Place arrow in the middle of the segment
-            const midPoint = new THREE.Vector3().addVectors(startPoint, endPoint).multiplyScalar(0.5);
-            const distance = startPoint.distanceTo(endPoint);
-            
-            // Only draw if segment is long enough
-            if (distance > CONFIG.pointRadius * 2.5) {
-                // Adjust length to be small and centered
-                const arrowLength = Math.min(CONFIG.arrowLength, distance * 0.4); 
-                const arrowStart = midPoint.clone().sub(direction.clone().multiplyScalar(arrowLength / 2));
+        const segmentCount = points.length - 1;
+        for (let i = 0; i < segmentCount; i++) {
+            // Midpoint parameter along the curve for this segment
+            const tMid = (i + 0.5) / segmentCount;
 
-                const headLength = arrowLength * 0.4;
-                const headWidth = headLength * 0.6;
+            // Position and tangent ON the curve — keeps arrow on the grey line
+            const midPoint  = curve.getPoint(tMid);
+            const direction = curve.getTangent(tMid).normalize();
 
-                const arrowHelper = new THREE.ArrowHelper(
-                    direction, 
-                    arrowStart, 
-                    arrowLength, 
-                    CONFIG.arrowColor, 
-                    headLength, 
-                    headWidth
-                );
-                group.add(arrowHelper);
-            }
+            // Skip degenerate tangents
+            if (direction.lengthSq() < 0.0001) continue;
+
+            const segmentLength = points[i].distanceTo(points[i + 1]);
+            if (segmentLength <= CONFIG.pointRadius * 2.5) continue;
+
+            const arrowLength = Math.min(CONFIG.arrowLength, segmentLength * 0.4);
+            const arrowStart  = midPoint.clone().sub(direction.clone().multiplyScalar(arrowLength / 2));
+            const headLength  = arrowLength * 0.4;
+            const headWidth   = headLength * 0.6;
+
+            const arrowHelper = new THREE.ArrowHelper(
+                direction,
+                arrowStart,
+                arrowLength,
+                CONFIG.arrowColor,
+                headLength,
+                headWidth
+            );
+            group.add(arrowHelper);
         }
     }
     
@@ -270,6 +267,23 @@ function buildScene(trajectoryData) {
     // Add AxesHelper
     const axesHelper = new THREE.AxesHelper(10);
     scene.add(axesHelper);
+
+    // Axis labels
+    const axisLabels = [
+        { text: 'Problematicity',  pos: new THREE.Vector3(11, 0,  0),  color: '#cc2200' },
+        { text: 'Instructivity',   pos: new THREE.Vector3(0,  11, 0),  color: '#007700' },
+        { text: 'Conclusivity',    pos: new THREE.Vector3(0,  0,  11), color: '#0044cc' },
+    ];
+
+    axisLabels.forEach(({ text, pos, color }) => {
+        const div = document.createElement('div');
+        div.className = 'axis-label';
+        div.textContent = text;
+        div.style.color = color;
+        const label = new CSS2DObject(div);
+        label.position.copy(pos);
+        scene.add(label);
+    });
 }
 
 async function processData() {
@@ -361,13 +375,17 @@ async function processData() {
             });
         }
 
-        // 1. Generate Embeddings
-        const embeddings = await generateEmbeddings(texts);
-        
-        // 2. Project with t-SNE
-        const projectedPoints = await runTSNE(embeddings);
-        
-        updateLoadingStatus(""); // Clear loading message
+        let projectedPoints;
+        if (globalCoords && globalCoords[currentMode]) {
+            // Fast path: pre-computed by precompute.py — no model download needed
+            projectedPoints = globalCoords[currentMode];
+            updateLoadingStatus("");
+        } else {
+            // Fallback: compute in-browser (slow — downloads ~90 MB model)
+            const embeddings = await generateEmbeddings(texts);
+            projectedPoints = await runTSNE(embeddings);
+            updateLoadingStatus("");
+        }
 
         // 3. Process data for scene
         const trajectoryData = metadata.map((meta, index) => {
@@ -392,18 +410,102 @@ async function processData() {
 }
 
 // --- Main execution ---
-function init() {
-    readTextFile("agents/traj.json", function(text) {
+async function init() {
+    try {
+        // Load trajectory data
+        const trajRes = await fetch("agents/traj.json");
+        globalRawData = await trajRes.json();
+
+        // Try to load pre-computed coords (written by precompute.py).
+        // If the file doesn't exist we silently fall back to in-browser embedding + t-SNE.
         try {
-            globalRawData = JSON.parse(text);
-            processData(); // Initial load with default mode
-        } catch (e) {
-            console.error("Failed to parse initial data", e);
+            const coordsRes = await fetch("agents/coords.json");
+            if (coordsRes.ok) {
+                globalCoords = await coordsRes.json();
+                console.log("Pre-computed coordinates loaded — skipping model download.");
+            }
+        } catch (_) {
+            console.log("coords.json not found — will compute embeddings in browser.");
         }
-    });
+
+        processData();
+    } catch (e) {
+        console.error("Failed to load data", e);
+    }
 }
 
 init();
+
+// --- Rendering Helpers ---
+
+// Waits for KaTeX auto-render to be available (it loads with `defer`)
+function renderMath(element) {
+    const tryRender = () => {
+        if (window.__katexReady && window.renderMathInElement) {
+            renderMathInElement(element, {
+                delimiters: [
+                    { left: '$$', right: '$$', display: true },
+                    { left: '$',  right: '$',  display: false },
+                    { left: '\\[', right: '\\]', display: true },
+                    { left: '\\(', right: '\\)', display: false }
+                ],
+                throwOnError: false
+            });
+        } else {
+            setTimeout(tryRender, 100);
+        }
+    };
+    tryRender();
+}
+
+// Render Markdown + LaTeX into a DOM element.
+// Strategy: stash all math blocks as placeholders before marked sees the text
+// (marked escapes backslashes, which destroys \(...\) and \[...\] delimiters),
+// run marked on the remainder, then restore the raw math before KaTeX renders.
+function renderContent(text, element) {
+    if (!text || text === '---') {
+        element.textContent = '---';
+        return;
+    }
+
+    const stash = [];
+    const save = (match) => {
+        stash.push(match);
+        return `\x02MATH${stash.length - 1}\x03`;
+    };
+
+    // Order matters: longer/display delimiters before shorter/inline ones
+    const protectedText = text
+        .replace(/\\\[[\s\S]*?\\\]/g,  save)   // \[ ... \]  display
+        .replace(/\\\([\s\S]*?\\\)/g,  save)   // \( ... \)  inline
+        .replace(/\$\$[\s\S]*?\$\$/g,  save)   // $$ ... $$  display
+        .replace(/\$[^$\n]+?\$/g,      save);  // $ ... $    inline
+
+    // Run Markdown (backslash-safe now)
+    let html = marked.parse(protectedText);
+
+    // Restore raw math strings so KaTeX auto-render can find them
+    html = html.replace(/\x02MATH(\d+)\x03/g, (_, i) => stash[+i]);
+
+    element.innerHTML = html;
+    renderMath(element);
+}
+
+// Strip Markdown/LaTeX to plain text for tooltips
+function toPlainText(text) {
+    if (!text) return '';
+    return text
+        .replace(/\$\$[\s\S]*?\$\$/g, '[formula]')
+        .replace(/\$[^$\n]+?\$/g, '[formula]')
+        .replace(/\\\([\s\S]*?\\\)/g, '[formula]')
+        .replace(/\\\[[\s\S]*?\\\]/g, '[formula]')
+        .replace(/#{1,6}\s+/g, '')
+        .replace(/\*\*(.+?)\*\*/g, '$1')
+        .replace(/\*(.+?)\*/g, '$1')
+        .replace(/`(.+?)`/g, '$1')
+        .replace(/\[(.+?)\]\(.+?\)/g, '$1')
+        .trim();
+}
 
 // --- UI Logic ---
 document.getElementById('viz-mode').addEventListener('change', (e) => {
@@ -426,24 +528,21 @@ const metadataPanel = document.getElementById('metadata-panel');
 
 function updateInfoPanel(data) {
     if (data.type === 'combined') {
-        uiProblem.textContent = data.problem;
-        uiMethod.textContent = data.method;
-        uiConclusion.textContent = data.conclusion;
-    } else {
-        // Customize panel based on type
-        if (data.type === 'problem') {
-            uiProblem.textContent = data.problem;
-            uiMethod.textContent = "---";
-            uiConclusion.textContent = "---";
-        } else if (data.type === 'method') {
-            uiProblem.textContent = "---";
-            uiMethod.textContent = data.method;
-            uiConclusion.textContent = "---";
-        } else if (data.type === 'conclusion') {
-            uiProblem.textContent = "---";
-            uiMethod.textContent = "---";
-            uiConclusion.textContent = data.conclusion;
-        }
+        renderContent(data.problem, uiProblem);
+        renderContent(data.method, uiMethod);
+        renderContent(data.conclusion, uiConclusion);
+    } else if (data.type === 'problem') {
+        renderContent(data.problem, uiProblem);
+        renderContent('---', uiMethod);
+        renderContent('---', uiConclusion);
+    } else if (data.type === 'method') {
+        renderContent('---', uiProblem);
+        renderContent(data.method, uiMethod);
+        renderContent('---', uiConclusion);
+    } else if (data.type === 'conclusion') {
+        renderContent('---', uiProblem);
+        renderContent('---', uiMethod);
+        renderContent(data.conclusion, uiConclusion);
     }
     document.getElementById('point-title').textContent = data.label || 'Point Details';
     infoPanel.classList.remove('hidden');
@@ -531,14 +630,15 @@ function onMouseMove(event) {
                 // Update metadata panel on hover
                 updateMetadataPanel(object.userData);
                 
-                // Determine text to show based on type
+                // Determine text to show based on type, stripped to plain text
                 let displayText = "";
                 if (object.userData.type === 'problem') displayText = object.userData.problem;
                 else if (object.userData.type === 'method') displayText = object.userData.method;
                 else if (object.userData.type === 'conclusion') displayText = object.userData.conclusion;
                 else displayText = object.userData.problem; // Fallback for combined
 
-                const textShort = displayText.length > 50 ? displayText.substring(0, 50) + "..." : displayText;
+                const plain = toPlainText(displayText);
+                const textShort = plain.length > 50 ? plain.substring(0, 50) + "..." : plain;
                 const label = object.userData.label ? `<strong>${object.userData.label}</strong><br>` : '';
                 tooltip.innerHTML = `${label}${textShort}`;
             }
@@ -559,12 +659,44 @@ window.addEventListener('resize', () => {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
+    labelRenderer.setSize(window.innerWidth, window.innerHeight);
 });
+
+// --- Info Panel Resize ---
+(function () {
+    const panel  = document.getElementById('info-panel');
+    const handle = document.getElementById('info-panel-resize-handle');
+    let startX, startWidth;
+
+    handle.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        startX     = e.clientX;
+        startWidth = panel.offsetWidth;
+        handle.classList.add('dragging');
+
+        const onMove = (e) => {
+            // Panel is anchored to the right, so dragging left increases width
+            const delta = startX - e.clientX;
+            const newWidth = Math.min(700, Math.max(200, startWidth + delta));
+            panel.style.width = newWidth + 'px';
+        };
+
+        const onUp = () => {
+            handle.classList.remove('dragging');
+            window.removeEventListener('mousemove', onMove);
+            window.removeEventListener('mouseup',   onUp);
+        };
+
+        window.addEventListener('mousemove', onMove);
+        window.addEventListener('mouseup',   onUp);
+    });
+}());
 
 function animate() {
     requestAnimationFrame(animate);
     controls.update();
     renderer.render(scene, camera);
+    labelRenderer.render(scene, camera);
 }
 
 animate();
