@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SciTracer - Trajectory Visualization</title>
+    <link rel="stylesheet" href="style.css">
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+                "@xenova/transformers": "https://cdn.jsdelivr.net/npm/@xenova/transformers@2.14.0/dist/transformers.min.js"
+            }
+        }
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/tsne@1.0.1/tsne.min.js"></script>
+</head>
+<body>
+    <div id="container"></div>
+    <div id="ui-layer">
+        <div id="tooltip" class="tooltip hidden"></div>
+        <div id="metadata-panel" class="panel metadata-panel hidden">
+            <h2>Metadata</h2>
+            <div class="metadata-content">
+                <div class="metadata-item">
+                    <span class="metadata-label">ID:</span>
+                    <span id="metadata-id">-</span>
+                </div>
+                <div class="metadata-item">
+                    <span class="metadata-label">Label:</span>
+                    <span id="metadata-label">-</span>
+                </div>
+                <div class="metadata-item">
+                    <span class="metadata-label">Type:</span>
+                    <span id="metadata-type">-</span>
+                </div>
+                <div class="metadata-item">
+                    <span class="metadata-label">Problem Length:</span>
+                    <span id="metadata-problem-length">-</span>
+                </div>
+                <div class="metadata-item">
+                    <span class="metadata-label">Method Length:</span>
+                    <span id="metadata-method-length">-</span>
+                </div>
+                <div class="metadata-item">
+                    <span class="metadata-label">Conclusion Length:</span>
+                    <span id="metadata-conclusion-length">-</span>
+                </div>
+                <div class="metadata-item">
+                    <span class="metadata-label">Total Words:</span>
+                    <span id="metadata-total-words">-</span>
+                </div>
+            </div>
+        </div>
+        <div id="info-panel" class="panel hidden">
+            <h2 id="point-title">Point Details</h2>
+            <div class="field">
+                <h3>Problem Definition</h3>
+                <p id="point-problem">Select a point...</p>
+            </div>
+            <div class="field">
+                <h3>Methodology/Instruction</h3>
+                <p id="point-method">...</p>
+            </div>
+            <div class="field">
+                <h3>Conclusion</h3>
+                <p id="point-conclusion">...</p>
+            </div>
+            <button id="close-panel">Close</button>
+        </div>
+        <div id="controls-panel" class="panel">
+            <h3>Controls</h3>
+            <p>Left Click: Rotate</p>
+            <p>Right Click: Pan</p>
+            <p>Scroll: Zoom</p>
+            <p>Click Node: View Details</p>
+            <div style="margin-top: 15px; border-top: 1px solid #ccc; padding-top: 10px;">
+                <label for="viz-mode" style="font-size: 0.9em; font-weight: bold;">Mode:</label>
+                <select id="viz-mode" style="width: 100%; margin-top: 5px; padding: 5px;">
+                    <option value="triplets">Combined Steps (Triplets)</option>
+                    <option value="components">All Individual Components</option>
+                    <option value="problems">Only Problems</option>
+                    <option value="methods">Only Methodology</option>
+                    <option value="conclusions">Only Conclusions</option>
+                </select>
+            </div>
+        </div>
+    </div>
+    <script type="module" src="script.js"></script>
+</body>
+</html>
