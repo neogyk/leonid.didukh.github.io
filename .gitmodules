@@ -1,0 +1,3 @@
+[submodule "blog/bl"]
+	path = blog/bl
+	url = https://github.com/neogyk/blog
