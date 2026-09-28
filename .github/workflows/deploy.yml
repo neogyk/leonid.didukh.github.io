@@ -1,0 +1,141 @@
+name: Deploy Main Site and Blog
+
+on:
+  push:
+    branches: ["main"]
+  # Manual re-run from the Actions tab.
+  workflow_dispatch:
+  # Lets the blog repo trigger a rebuild here after it changes. A ready-made
+  # workflow for the blog repo lives in .github/blog-dispatch.example.yml.
+  # Equivalent manual call:
+  #   gh api repos/neogyk/leonid.didukh.github.io/dispatches \
+  #     -f event_type=blog-updated
+  repository_dispatch:
+    types: ["blog-updated"]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
+env:
+  # Blog source repo and branch.
+  BLOG_REPO: neogyk/blog
+  BLOG_REF: master
+  # The blog repo tracks only its overrides of the theme (_config.yml and a
+  # couple of layouts); the theme itself is git-ignored there. The npm
+  # package is the built form of the theme (it includes the compiled
+  # styles.css, which the theme's git repo does not), so it is installed
+  # from npm at build time.
+  THEME_PKG: hexo-theme-simpleblock@0.2.1
+  # Path of the blog below the site root.
+  BLOG_SUBDIR: blog
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout main site
+        uses: actions/checkout@v4
+        # Submodules are intentionally not fetched: the blog is checked out
+        # separately below from its own repo so it can be built.
+
+      - name: Checkout blog source
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.BLOG_REPO }}
+          ref: ${{ env.BLOG_REF }}
+          path: tmp-blog
+
+      - name: Resolve Pages base URL
+        # Exposes base_url so absolute URLs (feed, canonical) are right
+        # whether this repo is served as a project site
+        # (neogyk.github.io/leonid.didukh.github.io) or at a domain root.
+        id: pages
+        uses: actions/configure-pages@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: tmp-blog/package-lock.json
+
+      - name: Assemble main site
+        # The root site is static HTML with no build step. Copy it into
+        # public/, excluding VCS files, CI config, the submodule stub and
+        # the blog checkout.
+        run: |
+          mkdir -p public
+          rsync -a \
+            --exclude '.git' \
+            --exclude '.gitmodules' \
+            --exclude '.github' \
+            --exclude 'blog' \
+            --exclude 'tmp-blog' \
+            --exclude 'public' \
+            ./ public/
+          # Tell Pages not to run Jekyll over the output.
+          touch public/.nojekyll
+
+      - name: Install blog theme
+        # Full theme from npm first, then the blog repo's own theme files on
+        # top so its _config.yml and custom layouts win.
+        working-directory: tmp-blog
+        run: |
+          npm pack "$THEME_PKG" --pack-destination . --silent
+          if [ -d themes/simpleblock ]; then
+            mv themes/simpleblock tmp-theme-overrides
+          fi
+          mkdir -p themes/simpleblock
+          tar xzf hexo-theme-simpleblock-*.tgz --strip-components=1 -C themes/simpleblock
+          rm -f hexo-theme-simpleblock-*.tgz
+          if [ -d tmp-theme-overrides ]; then
+            rsync -a tmp-theme-overrides/ themes/simpleblock/
+            rm -rf tmp-theme-overrides
+          fi
+
+      - name: Build blog (Hexo)
+        working-directory: tmp-blog
+        env:
+          BASE_URL: ${{ steps.pages.outputs.base_url }}
+        run: |
+          npm ci
+          # Only `url` is overridden. `root` stays "/" on purpose: the blog's
+          # scripts/relative-root-links.js rewrites every root-absolute link
+          # into a page-relative one, so the output works under any subpath.
+          # Setting root to the subpath would double-prefix those links.
+          printf 'url: %s/%s\nroot: /\n' "$BASE_URL" "$BLOG_SUBDIR" > _config.deploy.yml
+          echo "Hexo overrides:"; cat _config.deploy.yml
+          npx hexo generate --config _config.yml,_config.deploy.yml
+          # Fail loudly if the theme did not render (empty HTML pages) or the
+          # stylesheet is missing.
+          empty=$(find public -name '*.html' -size 0 | wc -l)
+          if [ "$empty" -gt 0 ]; then
+            echo "::error::$empty generated HTML files are empty; theme layouts missing?"
+            exit 1
+          fi
+          test -s public/styles.css || { echo "::error::styles.css missing from blog output"; exit 1; }
+
+      - name: Place blog under subdir
+        run: |
+          mkdir -p "public/$BLOG_SUBDIR"
+          rsync -a tmp-blog/public/ "public/$BLOG_SUBDIR/"
+          echo "Site tree (top level):"; ls -la public
+          echo "Blog tree (top level):"; ls "public/$BLOG_SUBDIR" | head -20
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

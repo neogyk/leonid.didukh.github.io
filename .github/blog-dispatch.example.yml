@@ -1,0 +1,29 @@
+# Copy this file into the blog repo (neogyk/blog) as
+# .github/workflows/notify-site.yml. It is not active here; only files under
+# .github/workflows/ run.
+#
+# It fires a repository_dispatch to the main site so the unified deploy
+# rebuilds whenever the blog changes.
+#
+# Setup in neogyk/blog:
+#   1. Create a fine-grained PAT scoped to neogyk/leonid.didukh.github.io
+#      with "Contents: Read and write" (needed for the dispatches endpoint).
+#   2. Add it as a repo secret named SITE_DISPATCH_TOKEN.
+
+name: Notify main site
+
+on:
+  push:
+    branches: ["master"]
+  workflow_dispatch:
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger site rebuild
+        env:
+          GH_TOKEN: ${{ secrets.SITE_DISPATCH_TOKEN }}
+        run: |
+          gh api repos/neogyk/leonid.didukh.github.io/dispatches \
+            -f event_type=blog-updated
